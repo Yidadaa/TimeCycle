@@ -27,6 +27,8 @@ class TransformedGridLoss(nn.Module):
             self.P = self.P.cuda();
 
     def forward(self, theta, theta_GT):
+        # 这里计算的是两个 patch 块的位置之间的 loss
+        # 相对于原文的 section 3.2.3 alignment objective
         # expand grid according to batch size
         batch_size = theta.size()[0]
         P = self.P.expand(batch_size,2,self.N)

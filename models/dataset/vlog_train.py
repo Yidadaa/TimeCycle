@@ -30,6 +30,8 @@ class VlogSet(data.Dataset):
         self.cropSize2 = params['cropSize2']
         self.videoLen = params['videoLen']
         # prediction distance, how many frames far away
+        # yidadaa: predDistance 参数的作用是什么？
+        # 通读代码后发现，predDistance 除了提供一个边界之外，似乎并没有用处
         self.predDistance = params['predDistance']
         # offset x,y parameters
         self.offset = params['offset']
@@ -54,6 +56,7 @@ class VlogSet(data.Dataset):
             self.fnums.append(fnum)
 
         f.close()
+        # 使用 GeometricTnf 执行可微采样，这里主要根据变换矩阵从图像中获取图像块
         self.geometricTnf = GeometricTnf('affine', out_h=params['cropSize2'], out_w=params['cropSize2'], use_cuda = False)
 
     def cropimg(self, img, offset_x, offset_y, cropsize):
@@ -73,6 +76,7 @@ class VlogSet(data.Dataset):
         return cropim
 
     def processflow(self, flow):
+        '''把 flow scale 到 [-60, 60] 之间'''
         boundnum = 60
         flow = flow.astype(np.float)
         flow = flow / 255.0
@@ -100,6 +104,7 @@ class VlogSet(data.Dataset):
         if random.random() <= 0.5:
             toflip = True
 
+        # 从数据集中选取同一个视频中的 videoLen + predDistance 帧连续帧
         frame_gap = self.frame_gap
         current_len = (self.videoLen  + self.predDistance) * frame_gap
         startframe = 0
@@ -116,11 +121,13 @@ class VlogSet(data.Dataset):
             frame_gap = float(newLen - 1) / float(current_len)
             future_idx = int(startframe + current_len * frame_gap)
 
-
+        # 默认裁剪偏移为 -1
         crop_offset_x = -1
         crop_offset_y = -1
+        # 控制裁剪比例在 4:3 到 3:4之间
         ratio = random.random() * (4/3 - 3/4) + 3/4
         # reading video
+        # 先读取长度为 videoLen 的视频帧
         for i in range(self.videoLen):
 
             nowid = int(startframe + i * frame_gap)
@@ -165,6 +172,7 @@ class VlogSet(data.Dataset):
         # img_path = folder_path + "{:02d}.jpg".format(future_idx)
         # specialized for fouhey format
 
+        # 选取之后的两帧作为预测帧，imgs_target
         for i in range(2):
 
             newid = int(future_idx + 1 + i * frame_gap)
@@ -205,19 +213,25 @@ class VlogSet(data.Dataset):
         for i in range(2):
             imgs_target[i] = future_imgs[i].clone()
 
-
+        # 根据帧间的像素绝对误差，来确定应该取哪个图像块来作为追踪块
         flow_cmb = future_imgs[0] - future_imgs[1]
         flow_cmb = im_to_numpy(flow_cmb)
         flow_cmb = flow_cmb.astype(np.float)
         flow_cmb = np.abs(flow_cmb)
 
+        # cropSize 用来确定在原始图像中的裁剪大小，保证图像是方形的
+        # 此数据集中是 240 * 240
         side_edge = self.cropSize
         box_edge  = int(side_edge / self.gridSize)
 
+        # 遍历所有图像块
         lblxset = []
         lblyset = []
         scores  = []
 
+        # 疑惑，如果这里 gridSize 为 3，那么此处的循环是没有意义的
+        # 除非 gridSize 默认为 9，然后才能和 box_edge * 3 搭配使用，从而生成 80 * 80 的图像块
+        # 所以根据推测，此处 gridSize 应该为 9，即 parser 中的默认参数
         for i in range(self.gridSize - 2):
             for j in range(self.gridSize - 2):
 
@@ -225,12 +239,13 @@ class VlogSet(data.Dataset):
                 offset_y1 = j * box_edge
                 lblxset.append(i)
                 lblyset.append(j)
-
+                # tpatch 是指某个图像块之间图像的 L1 灰度距离
                 tpatch = flow_cmb[offset_y1: offset_y1 + box_edge * 3, offset_x1: offset_x1 + box_edge * 3].copy()
                 tsum = tpatch.sum()
                 scores.append(tsum)
 
-
+        # 根据灰度距离从小到大排序，取 top10 差距最大的
+        # 然后在 top10 中随机选取一个图像块作为最终 patch
         scores = np.array(scores)
         ids = np.argsort(scores)
         ids = ids[-10: ]
@@ -245,13 +260,15 @@ class VlogSet(data.Dataset):
             if toflip:
                 lbl_x = self.gridSize - 3 - lbl_x
 
-        lbl   = lbl_x * (self.gridSize - 2) + lbl_y
+        # lbl   = lbl_x * (self.gridSize - 2) + lbl_y
 
+        # 缩放到 [0, 1]，用来确定具体的像素位置
         xloc = lbl_x / 6.0
         yloc = lbl_y / 6.0
 
         theta_aff = np.random.rand(6)
         scale = 1.0 - 1.0 / 3.0
+        # 为图像块的起始位置加上随机偏移
         randnum = (np.random.rand(2) - 0.5) / 6.0
         xloc = xloc + randnum[0]
         yloc = yloc + randnum[1]
@@ -266,6 +283,7 @@ class VlogSet(data.Dataset):
         if yloc > 1:
             yloc = 1.0
 
+        # 根据选取的图像块，生成变换矩阵
         # [-45, 45]
         alpha = (np.random.rand(1)-0.5)*2*np.pi*(1.0/4.0)
 
@@ -278,10 +296,12 @@ class VlogSet(data.Dataset):
 
         theta = torch.Tensor(theta_aff.astype(np.float32))
         theta = theta.view(1, 2, 3)
-        theta_batch = theta.repeat(2, 1, 1)
+        theta_batch = theta.repeat(2, 1, 1) # repeat 两次，因为 imgs_target.size[0] == 2
+        # 根据 theta 变换矩阵执行采样，生成图像块
         patch_target = self.geometricTnf(image_batch=imgs_target, theta_batch=theta_batch)
         theta = theta.view(2, 3)
 
+        # TODO: 疑惑，既然这里只需要输出一个 target image，为啥上面的采样过程要对两张图像都做呢？
         imgs_target = imgs_target[0:1]
         patch_target = patch_target[0:1]
 
