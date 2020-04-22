@@ -14,7 +14,6 @@ import torchvision
 import torch.nn.functional as F
 from geotnf.transformation import GeometricTnfAffine
 from geotnf.loss import TransformedGridLoss, WeakInlierCountPool
-from utils.torch_util import expand_dim
 
 import random
 import utils.imutils2
@@ -64,11 +63,6 @@ class CycleTime(nn.Module):
 
         self.leakyrelu = nn.LeakyReLU(0.1, inplace=True)
         self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(7, stride=1)
-
-        self.avgpool3d = nn.AvgPool3d((4, 2, 2), stride=(1, 2, 2))
-        self.maxpool2d = nn.MaxPool2d(2, stride=2)
-
 
         # initialization
 
@@ -88,11 +82,6 @@ class CycleTime(nn.Module):
                                          tps_reg_factor=0.2,
                                          out_h=self.spatial_out2, out_w=self.spatial_out2,
                                          offset_factor=227/210)
-
-        xs = np.linspace(-1,1,80)
-        xs = np.meshgrid(xs, xs)
-        xs = np.stack(xs, 2)
-        self.xs = xs
 
         self.criterion_inlier = WeakInlierCountPool(geometric_model='affine', tps_grid_size=3, tps_reg_factor=0.2, h_matches=30, w_matches=30, use_conv_filter=False, dilation_filter=0, normalize_inlier_count=True)
         self.criterion_synth  = TransformedGridLoss(use_cuda=True, geometric_model='affine')
@@ -156,6 +145,14 @@ class CycleTime(nn.Module):
 
 
     def transform_trans_out(self, trans_out1):
+        '''Transform transition vector to matrix.
+
+        Args:
+            trans_out1: shape (n, 3)
+
+        Returns:
+            trans_out1: shape (n, 2, 3)
+        '''
         # 将 [tx, ty, s] 转换为矩阵形式，其中 s 是旋转角度
         # 1/3 * cos(s), -1/3 * sin(s), tx
         # 1/3 * sin(s),  1/3 * cos(s), ty
@@ -179,6 +176,9 @@ class CycleTime(nn.Module):
 
     def forward_base(self, x, contiguous=False, can_detach=True):
         '''
+        Args:
+            x: (b, n, 3, h, w)
+
         Return:
             x: (, 512) 维度的特征
             x_pre: resnet 提取到的特征

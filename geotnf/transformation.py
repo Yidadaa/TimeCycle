@@ -185,42 +185,37 @@ class AffineGridGenV3(Module):
         super(AffineGridGenV3, self).__init__()
         self.out_h, self.out_w = out_h, out_w
 
-        # create grid in numpy
-        # self.grid = np.zeros( [self.out_h, self.out_w, 3], dtype=np.float32)
         # sampling grid with dim-0 coords (Y)
+        # shape of grid_x and grid_y: [h, w]
         self.grid_X,self.grid_Y = np.meshgrid(np.linspace(-1,1,out_w),np.linspace(-1,1,out_h))
-        # grid_X,grid_Y: size [1,H,W,1,1]
-        # self.grid_X = torch.FloatTensor(self.grid_X).unsqueeze(0).unsqueeze(3)
-        # self.grid_Y = torch.FloatTensor(self.grid_Y).unsqueeze(0).unsqueeze(3)
-        # self.grid_X = Variable(self.grid_X,requires_grad=False)
-        # self.grid_Y = Variable(self.grid_Y,requires_grad=False)
-        # if use_cuda:
-        #     self.grid_X = self.grid_X.cuda()
-        #     self.grid_Y = self.grid_Y.cuda()
 
     def forward(self, theta):
-        b=theta.size(0)
+        # shape of theta: [b, 6]
+        b = theta.size(0)
         if not theta.size()==(b,6):
             theta = theta.view(b,6)
             theta = theta.contiguous()
 
+        # shape: [1, h, w, 1]
         grid_X = torch.Tensor(self.grid_X).unsqueeze(0).unsqueeze(3).cuda()
         grid_Y = torch.Tensor(self.grid_Y).unsqueeze(0).unsqueeze(3).cuda()
         grid_X = Variable(grid_X,requires_grad=False)
         grid_Y = Variable(grid_Y,requires_grad=False)
 
+        # shape of each theta element: [b, 1, 1, 1]
         t0=theta[:,0].unsqueeze(1).unsqueeze(2).unsqueeze(3)
         t1=theta[:,1].unsqueeze(1).unsqueeze(2).unsqueeze(3)
         t2=theta[:,2].unsqueeze(1).unsqueeze(2).unsqueeze(3)
         t3=theta[:,3].unsqueeze(1).unsqueeze(2).unsqueeze(3)
         t4=theta[:,4].unsqueeze(1).unsqueeze(2).unsqueeze(3)
         t5=theta[:,5].unsqueeze(1).unsqueeze(2).unsqueeze(3)
-        X = expand_dim(grid_X,0,b)
-        Y = expand_dim(grid_Y,0,b)
-        Xp = X*t0 + Y*t1 + t2
-        Yp = X*t3 + Y*t4 + t5
+        X = expand_dim(grid_X,0,b) # shape: [b, h, w, 1]
+        Y = expand_dim(grid_Y,0,b) # shape: [b, h, w, 1]
+        # P = Theta @ [X, Y, 1].T
+        Xp = X*t0 + Y*t1 + t2 # shape: [b, h, w, 1]
+        Yp = X*t3 + Y*t4 + t5 # shape: [b, h, w, 1]
 
-        return torch.cat((Xp,Yp),3)
+        return torch.cat((Xp,Yp),3) # shape: [b, h, w, 2]
 
 
 
