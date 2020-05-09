@@ -24,7 +24,7 @@ class PointTnf(object):
     def tpsPointTnf(self,theta,points):
         # points are expected in [B,2,N], where first row is X and second row is Y
         # reshape points for applying Tps transformation
-        points=points.unsqueeze(3).transpose(1,3)
+        points=points.unsqueeze(3).transpose(1,3) # shape: (B, 1, N, 2)
         # apply transformation
         warped_points = self.tpsTnf.apply_transformation(theta,points)
         # undo reshaping

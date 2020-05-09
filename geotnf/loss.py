@@ -31,10 +31,10 @@ class TransformedGridLoss(nn.Module):
         # 相对于原文的 section 3.2.3 alignment objective
         # expand grid according to batch size
         batch_size = theta.size()[0]
-        P = self.P.expand(batch_size,2,self.N)
+        P = self.P.expand(batch_size,2,self.N) # shape: (n, 2, h * w)
         # compute transformed grid points using estimated and GT tnfs
         if self.geometric_model=='affine':
-            P_prime = self.pointTnf.affPointTnf(theta,P)
+            P_prime = self.pointTnf.affPointTnf(theta,P) # shape: (n, 2, h * w)
             P_prime_GT = self.pointTnf.affPointTnf(theta_GT,P)
         elif self.geometric_model=='tps':
             P_prime = self.pointTnf.tpsPointTnf(theta.unsqueeze(2).unsqueeze(3),P)
@@ -47,7 +47,8 @@ class TransformedGridLoss(nn.Module):
 
 
 class WeakInlierCountPool(nn.Module):
-    def __init__(self, geometric_model='affine', tps_grid_size=3, tps_reg_factor=0, h_matches=15, w_matches=15, use_conv_filter=False, dilation_filter=None, use_cuda=True, normalize_inlier_count=False, offset_factor=227/210):
+    def __init__(self, geometric_model='affine', tps_grid_size=3, tps_reg_factor=0, h_matches=15, w_matches=15,
+            use_conv_filter=False, dilation_filter=None, use_cuda=True, normalize_inlier_count=False, offset_factor=227/210):
         super(WeakInlierCountPool, self).__init__()
         self.normalize=normalize_inlier_count
         self.geometric_model = geometric_model

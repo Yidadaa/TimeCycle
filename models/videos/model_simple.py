@@ -91,8 +91,8 @@ class CycleTime(nn.Module):
         '''计算两个特征图的响应矩阵，使用 softmax 做归一化，从而反应各个位置的特征相关性
 
         Args:
-            patch_feat1: 图像块特征图
-            r50_feat2: 图像特征图
+            patch_feat1: 图像块特征图，shape (b, c, 10, 10)
+            r50_feat2: 图像特征图，shape (b, c, t, 30, 30)
 
         Return:
             corrfeat: 相关性矩阵
@@ -102,18 +102,20 @@ class CycleTime(nn.Module):
         if detach_corrfeat is True:
             r50_feat2 = r50_feat2.detach()
 
-        r50_feat2 = r50_feat2.transpose(3, 4) # for the inlier counter
+        r50_feat2 = r50_feat2.transpose(3, 4) # for the inlier counter, shape = (b, c, t, 30, 30)
         r50_feat2 = r50_feat2.contiguous()
-        r50_feat2_vec = r50_feat2.view(r50_feat2.size(0), r50_feat2.size(1), -1)
-        r50_feat2_vec = r50_feat2_vec.transpose(1, 2)
+        r50_feat2_vec = r50_feat2.view(r50_feat2.size(0), r50_feat2.size(1), -1) # shape = (b, c, t * 30 * 30)
+        r50_feat2_vec = r50_feat2_vec.transpose(1, 2) # shape = (b, t * 30 * 30, c)
 
-        patch_feat1_vec = patch_feat1.view(patch_feat1.size(0), patch_feat1.size(1), -1)
-        corrfeat = torch.matmul(r50_feat2_vec, patch_feat1_vec)
+        patch_feat1_vec = patch_feat1.view(patch_feat1.size(0), patch_feat1.size(1), -1) # shape = (b, c, 10 * 10)
+        corrfeat = torch.matmul(r50_feat2_vec, patch_feat1_vec) # shape = (b, t * 30 * 30, 10 * 10)
 
-        corrfeat = torch.div(corrfeat, self.T)
+        corrfeat = torch.div(corrfeat, self.T) # TODO: what's this?
 
+        # shape = (b, t, 30 * 30, 10, 10)
         corrfeat  = corrfeat.view(corrfeat.size(0), T, self.spatial_out1 * self.spatial_out1, self.spatial_out2, self.spatial_out2)
         corrfeat  = F.softmax(corrfeat, dim=2)
+        # shape = (b, t * 30 * 30, 10, 10)
         corrfeat  = corrfeat.view(corrfeat.size(0), T * self.spatial_out1 * self.spatial_out1, self.spatial_out2, self.spatial_out2)
 
         return corrfeat
@@ -123,18 +125,19 @@ class CycleTime(nn.Module):
 
         # bs, channels, time, h2, w2
         r50_feat2 = r50_feat2.contiguous()
-        r50_feat2_vec = r50_feat2.view(r50_feat2.size(0), r50_feat2.size(1), -1)
-        r50_feat2_vec = r50_feat2_vec.transpose(1, 2)
+        r50_feat2_vec = r50_feat2.view(r50_feat2.size(0), r50_feat2.size(1), -1) # shape = (n, c, t * 10 * 10)
+        r50_feat2_vec = r50_feat2_vec.transpose(1, 2) # (n, t * 10 * 10, c)
 
         # bs, channels, h1, w1
-        patch_feat1 = patch_feat1.transpose(2, 3)
+        patch_feat1 = patch_feat1.transpose(2, 3) # shape = (n, c, w, h)
         patch_feat1 = patch_feat1.contiguous()
-        patch_feat1_vec = patch_feat1.view(patch_feat1.size(0), patch_feat1.size(1), -1)
+        patch_feat1_vec = patch_feat1.view(patch_feat1.size(0), patch_feat1.size(1), -1) # shape = (n, c, 30 * 30)
 
-        corrfeat = torch.matmul(r50_feat2_vec, patch_feat1_vec)
+        corrfeat = torch.matmul(r50_feat2_vec, patch_feat1_vec) # shape = (n, t * 10 * 10, 30 * 30)
         corrfeat  = torch.div(corrfeat, self.T)
         corrfeat  = corrfeat.contiguous()
 
+        # shape = (b, t, 10 * 10, 30 * 30)
         corrfeat  = corrfeat.view(corrfeat.size(0), T, self.spatial_out2 * self.spatial_out2, self.spatial_out1 * self.spatial_out1)
         corrfeat  = F.softmax(corrfeat, dim=3)
         corrfeat  = corrfeat.transpose(2, 3)
@@ -177,17 +180,17 @@ class CycleTime(nn.Module):
     def forward_base(self, x, contiguous=False, can_detach=True):
         '''
         Args:
-            x: (b, n, 3, h, w)
+            x: (n, t, 3, h, w)
 
         Return:
-            x: (, 512) 维度的特征
+            x: (, 512) 维度的特征，shape = (n, c, t, 30, 30)
             x_pre: resnet 提取到的特征
-            x_norm: x 的 l2 norm 之后的值
+            x_norm: x 的 l2 norm 之后的值，shape = (n, c, t, 30, 30)
         '''
         # import pdb; pdb.set_trace()
 
         # patch feature
-        x = x.transpose(1, 2)
+        x = x.transpose(1, 2) # shape = (n, 3, t, h, w)
         x_pre = self.encoderVideo(x)
 
         if self.detach_network and can_detach:
@@ -210,7 +213,7 @@ class CycleTime(nn.Module):
         # query is a patch, base is a volume with time depth 1
         corrfeat = self.compute_corr_softmax(query, base, detach_corrfeat=detach_corrfeat)
 
-        # 2. predict transform with affinity as input
+        # 2. predict transform with affinity as input, shape = (n * t, 30 * 30, 10, 10)
         corrfeat_mat = corrfeat.view(corrfeat.size(0) * temporal_out, self.spatial_out1 * self.spatial_out1, self.spatial_out2, self.spatial_out2)
         corrfeat_trans  = self.afterconv3_trans(corrfeat_mat)
         corrfeat_trans  = self.leakyrelu(corrfeat_trans)
@@ -218,7 +221,7 @@ class CycleTime(nn.Module):
         corrfeat_trans  = self.leakyrelu(corrfeat_trans)
         corrfeat_trans  = corrfeat_trans.view(corrfeat_trans.shape[0], -1)
 
-        trans_theta = self.linear2(corrfeat_trans).contiguous().view(corrfeat_trans.shape[0], 3)
+        trans_theta = self.linear2(corrfeat_trans).contiguous().view(corrfeat_trans.shape[0], 3) # shape: (n * t, 3)
         trans_theta = self.transform_trans_out(trans_theta) # 预测出来的转换参数通过此函数转换为转换矩阵，方便下一步使用
 
         return corrfeat, corrfeat_mat, corrfeat_trans, trans_theta
@@ -227,35 +230,37 @@ class CycleTime(nn.Module):
         '''
 
         Args:
-            ximg1: 待追踪图像
-            patch2: 初始图像中的 patch 块
-            img2: 初始图像
+            ximg1: 待追踪图像，shape = (n, t, 3, h, w), default: t = 4
+            patch2: 初始图像中的 patch 块，shape = (n, 3, h, w)
+            img2: 初始图像，shape = (n, 3, h, w)
+            theta: 变换矩阵，shape = (n, 2, 3)
         '''
         B, T = ximg1.shape[:2]
 
         # base features
-        r50_feat1, r50_feat1_pre, r50_feat1_norm = self.forward_base(ximg1)
+        r50_feat1, r50_feat1_pre, r50_feat1_norm = self.forward_base(ximg1) # shape = (n, c, t, 30, 30)
 
         # target patch feature
-        patch2_feat2, patch2_feat2_pre, patch_feat2_norm = self.forward_base(patch2, contiguous=True)
+        patch2_feat2, patch2_feat2_pre, patch_feat2_norm = self.forward_base(patch2, contiguous=True) # shape = (n, c, 10, 10)
 
         # target image feature
-        img_feat2, img_feat2_pre, img_feat2_norm = self.forward_base(img2, contiguous=True, can_detach=False)
+        img_feat2, img_feat2_pre, img_feat2_norm = self.forward_base(img2, contiguous=True, can_detach=False) # shape = (n, c, 30, 30)
 
 
         # base features to crop with transformations
-        r50_feat1_transform = r50_feat1.transpose(1, 2)
+        r50_feat1_transform = r50_feat1.transpose(1, 2) # shape = (n, t, c, 30, 30)
         channels = r50_feat1_transform.size(2)
         r50_feat1_transform = r50_feat1_transform.contiguous()
 
         # add original code
         # 使用卷积层预测图像块相对于参考图像的变换
+        # trans_out2 shape = (n * t, 2, 3)
         _, corrfeat_trans_matrix2, corrfeat_trans1, trans_out2 = self.compute_transform_img_to_patch(patch_feat2_norm, r50_feat1_norm, temporal_out=self.temporal_out)
         bs2 = corrfeat_trans1.size(0)
 
         # 使用预测出来的变换矩阵，从参考图像的特征图中抽取对应的特征块
-        r50_feat1_transform_ori = r50_feat1_transform.view(bs2, channels, self.spatial_out1, self.spatial_out1)
-        r50_feat1_transform_ori = self.geometricTnf(r50_feat1_transform_ori, trans_out2)
+        r50_feat1_transform_ori = r50_feat1_transform.view(bs2, channels, self.spatial_out1, self.spatial_out1) # shape = (n * t, c, 30, 30)
+        r50_feat1_transform_ori = self.geometricTnf(r50_feat1_transform_ori, trans_out2) # shape = (n * t, c, 10, 10)
 
         # r50_feat1_transform_ori = r50_feat1_transform_ori.transpose(1, 2)
 
@@ -263,7 +268,7 @@ class CycleTime(nn.Module):
         def skip_prediction(img_feat2_norm, r50_feat1_transform_ori):
             r50_feat1_transform_ori = r50_feat1_transform_ori.contiguous()
             r50_feat1_transform_ori = r50_feat1_transform_ori.view(B, self.temporal_out, r50_feat1_transform_ori.size(1),  self.spatial_out2, self.spatial_out2)
-            r50_feat1_transform_ori = r50_feat1_transform_ori.transpose(1, 2)
+            r50_feat1_transform_ori = r50_feat1_transform_ori.transpose(1, 2) # shape = (n, c, t, h, w)
 
             r50_feat1_transform_norm = F.normalize(r50_feat1_transform_ori, p=2, dim=1)
             corrfeat_trans_matrix_reverse = self.compute_corr_softmax2(img_feat2_norm, r50_feat1_transform_norm)
@@ -308,7 +313,6 @@ class CycleTime(nn.Module):
             else:
                 cur_query = init_query
 
-            crops = []
             for t in idx:
 
                 # 1. get affinity of current patch on current frame
@@ -316,9 +320,9 @@ class CycleTime(nn.Module):
                 cur_base_feat = r50_feat1_transform[:, t]
 
                 # 2. predict transform with affinity as input
-                corrfeat, corrfeat_mat, corrfeat_trans, trans_theta = self.compute_transform_img_to_patch(
+                _, _, _, trans_theta = self.compute_transform_img_to_patch(
                     cur_query if self.hist == 1 else cur_query.mean(0),
-                    cur_base_norm)
+                    cur_base_norm) # shape: (n * 1, 2, 3)
 
                 # 3. get cropped features with transform
                 cur_base_crop = self.geometricTnf(cur_base_feat, trans_theta)
@@ -388,6 +392,7 @@ class CycleTime(nn.Module):
             if c == T:
                 back_trans_feats = _outputs[-1]
 
+        # NOTE: 此代码块产生的数据，后续计算 loss 时并没有被用到
         # 抽取长时间步的 track 中的 backward 追踪时得到的所有特征块，然后用其与 target image feature 做 skip prediction
         back_trans_feats = torch.stack(back_trans_feats).transpose(0,1).contiguous()
         back_trans_feats = back_trans_feats.view(-1, *back_trans_feats.shape[2:])
@@ -398,12 +403,12 @@ class CycleTime(nn.Module):
         skip_trans, skip_corrfeat_mat = skip_prediction(img_feat2_norm, back_trans_feats)
 
         # 输出：
-        # outputs[:2]: cycle alignment 中的 backward thetas 和 forward thetas
-        # patch2_feat2: target image 中的 patch image feature
+        # outputs[:2]: cycle alignment 中的 backward thetas 和 forward thetas，其中 backward thetas 并没有用到
+        # patch2_feat2: target image 中的 patch image feature，计算 loss 时并没有用到
         # theta: patch image 相对于 target image 原始 theta 变换矩阵
         # trans_out2: patch image 相对于每一张 source image 的 theta 变换矩阵
         # trans_out3: source images 中单点匹配到的每一个 matched patch 相对于 target image 的 theta 变换矩阵
-        # skip_trans: source images 中连续匹配到的每一个 matched patch 相对于 target image 的 theta 变换矩阵
+        # skip_trans: source images 中连续匹配到的每一个 matched patch 相对于 target image 的 theta 变换矩阵，计算 loss 时并没有用到
         # skip_corrfeat_mat： 计算 skip_trans 时产生的相关性矩阵，后续计算 loss 时并没有用到
         # corrfeat_trans_matrix2: 计算 trans_out2 时产生的相关性矩阵，用于计算 inlier loss
         return outputs[:2], patch2_feat2, theta, trans_out2, trans_out3, skip_trans, skip_corrfeat_mat, corrfeat_trans_matrix2
