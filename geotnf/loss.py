@@ -99,7 +99,12 @@ class WeakInlierCountPool(nn.Module):
             if self.normalize:
                 epsilon=1e-5
                 mask = torch.div(mask,
-                                 torch.sum(torch.sum(torch.sum(mask+epsilon,3),2),1).unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(mask))
+                    torch.sum(
+                        torch.sum(
+                            torch.sum(mask + epsilon, 3)
+                        ,2)
+                    ,1).unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(mask)
+                ) # 有个吉儿用？mask 本来就是 0/1 矩阵，搁这 normalize 你🐎呢
                 if return_outliers:
                     mask_outliers = torch.div(mask_outliers,
                                               torch.sum(torch.sum(torch.sum(mask_outliers+epsilon,3),2),1).unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(mask_outliers))
